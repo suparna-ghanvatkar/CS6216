@@ -98,11 +98,12 @@ def l2_regularization(heads, tails, rels):
 class LinkPrediction(nn.Module):
     """A general link prediction model with a lookup table for relation
     embeddings."""
-    def __init__(self, dim, rel_model, loss_fn, num_relations, regularizer):
+    def __init__(self, dim, rel_model, loss_fn, num_relations, regularizer, batch_size):
         super().__init__()
         self.dim = dim
         self.normalize_embs = False
         self.regularizer = regularizer
+        self.batch_size = batch_size
 
         if rel_model == 'transe':
             self.score_fn = transe_score
@@ -173,7 +174,7 @@ class InductiveLinkPrediction(LinkPrediction):
             out = ent_embs
         else:
             # Forward is being used to compute link prediction loss
-            ent_embs = ent_embs.view(batch_size, 2, -1)
+            ent_embs = ent_embs.view(self.batch_size, 2, -1)
             out = self.compute_loss(ent_embs, rels, neg_idx)
 
         return out
@@ -186,7 +187,7 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
     """Description encoder with pretrained embeddings, obtained from BERT or a
     specified tensor file.
     """
-    def __init__(self, rel_model, loss_fn, num_relations, regularizer,
+    def __init__(self, rel_model, loss_fn, num_relations, regularizer, batch_size,
                  dim=None, encoder_name=None, embeddings=None):
         if not encoder_name and not embeddings:
             raise ValueError('Must provided one of encoder_name or embeddings')
@@ -197,7 +198,7 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
             #then it is GLOVE in this case
             encoder = WordEmbeddings('glove')
 
-        super().__init__(dim, rel_model, loss_fn, num_relations, regularizer)
+        super().__init__(dim, rel_model, loss_fn, num_relations, regularizer, batch_size)
 
         self.embeddings = encoder
 
@@ -205,7 +206,7 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
         raise NotImplementedError
 
 
-# In[50]:
+# In[9]:
 
 
 class DKRL(WordEmbeddingsLP):
@@ -215,34 +216,46 @@ class DKRL(WordEmbeddingsLP):
     entity attributes and multimedia descriptions."
     """
 
-    def __init__(self, dim, rel_model, loss_fn, num_relations, regularizer,
+    def __init__(self, dim, rel_model, loss_fn, num_relations, regularizer, batch_size,
                  encoder_name=None, embeddings=None):
-        super().__init__(rel_model, loss_fn, num_relations, regularizer,
+        super().__init__(rel_model, loss_fn, num_relations, regularizer, batch_size,
                          dim, encoder_name, embeddings)
 
-        emb_dim = self.embeddings.embedding_length
-        self.conv1 = nn.Conv1d(emb_dim, self.dim, kernel_size=2)
+        self.emb_dim = self.embeddings.embedding_length
+        self.conv1 = nn.Conv1d(self.emb_dim, self.dim, kernel_size=2)
         self.conv2 = nn.Conv1d(self.dim, self.dim, kernel_size=2)
 
     def _encode_entity(self, text):
         # Extract word embeddings and mask padding
-        
+        max_len = 32
         all_emb = []
         for ent_text in text:
-            emb = []
-            #print(ent_text)
-            for ent in ent_text:
+            emb = torch.zeros(len(ent_text), max_len, self.emb_dim)
+            for i, ent in enumerate(ent_text):
                 #print(ent)
                 self.embeddings.embed(ent)
-                emb.append(ent.get_embedding())
-                print(emb)
-            all_emb.append(emb)
-        print(all_emb)
+                toks = []
+                for token in ent:
+                    toks.append(token.embedding.numpy())
+                toks = torch.tensor(toks)
+                if max_len>len(toks):
+                    emb[i,:len(toks)] = toks
+                else:
+                    emb[i, :max_len] = toks[:max_len]
+                #print(emb)
+            all_emb.append(emb.numpy())
+        #print(all_emb)
+        all_emb = np.array(all_emb)
         embs = torch.tensor(all_emb)
+        print(embs.shape)
 
+        #First reshape the batch*2 number of entities - this is done in blp in indcutive forward only
+        embs = embs.view(-1, max_len, self.emb_dim)
+        text_mask = torch.ones((embs.shape[0], max_len), dtype=torch.float)
+        text_mask = text_mask.unsqueeze(1)
         # Reshape to (N, C, L)
         embs = embs.transpose(1, 2)
-        text_mask = text_mask.unsqueeze(1)
+        #text_mask = text_mask.unsqueeze(1)
 
         # Pass through CNN, adding padding for valid convolutions
         # and masking outputs due to padding
@@ -261,6 +274,7 @@ class DKRL(WordEmbeddingsLP):
         embs = F.pad(embs, [0, 1])
         embs = self.conv2(embs)
         lengths = torch.sum(text_mask, dim=-1)
+
         embs = torch.sum(embs * text_mask, dim=-1) / lengths
         embs = torch.tanh(embs)
 
@@ -359,7 +373,7 @@ def get_negative_sampling_indices(batch_size, num_negatives, repeats=1):
     return neg_idx
 
 
-# In[40]:
+# In[13]:
 
 
 class GraphDataset(Dataset):
@@ -549,9 +563,9 @@ class TextGraphDataset(GraphDataset):
             raise ValueError('collate_text can only work with batch sizes'
                              ' larger than 1.')
         
-        print(data_list)
+        #print(data_list)
         pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
-        print(pos_pairs)
+        #print(pos_pairs)
         text = self.get_entity_description(pos_pairs)
 
         neg_idx = get_negative_sampling_indices(batch_size, self.neg_samples,
@@ -572,12 +586,12 @@ import logging
 
 
 def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
-              encoder_name, regularizer):
+              encoder_name, regularizer, batch_size):
     if model == 'bert-dkrl':
-        return DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
+        return DKRL(dim, rel_model, loss_fn, num_relations, regularizer, batch_size,
                            encoder_name=encoder_name)
     elif model == 'glove-dkrl':
-        return DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
+        return DKRL(dim, rel_model, loss_fn, num_relations, regularizer, batch_size,
                            embeddings='data/glove/glove.6B.300d.pt')
     else:
         raise ValueError(f'Unkown model {model}')
@@ -1011,7 +1025,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
     model = get_model(model, dim, rel_model, loss_fn,
                             len(train_val_test_ent), train_data.num_rels,
-                            encoder_name, regularizer)
+                            encoder_name, regularizer, batch_size)
     if checkpoint is not None:
         model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
 
@@ -1094,7 +1108,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     #torch.save(train_val_test_ent, osp.join(OUT_PATH, f'ents-base.pt'))
 
 
-# In[51]:
+# In[19]:
 
 
 link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin',                     encoder_name='bert-base-cased', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128,                    max_epochs=1, checkpoint=None)

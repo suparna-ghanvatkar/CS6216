@@ -20,7 +20,8 @@ import models
 import utils
 
 OUT_PATH = 'output/'
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu')
+#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 ex = Experiment()
 ex.logger = utils.get_logger()
@@ -471,3 +472,5 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
 
 
 ex.run_commandline()
+
+#link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin',                     encoder_name='bert-base-cased', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=1, checkpoint=None)

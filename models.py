@@ -176,15 +176,19 @@ class DKRL(WordEmbeddingsLP):
             text_mask = torch.ones_like(text_tok, dtype=torch.float)
         # Extract word embeddings and mask padding
         embs = self.embeddings(text_tok) * text_mask.unsqueeze(dim=-1)
-
+        print(text_mask.shape)
         # Reshape to (N, C, L)
+        
         embs = embs.transpose(1, 2)
         text_mask = text_mask.unsqueeze(1)
+        print(text_mask.shape)
 
         # Pass through CNN, adding padding for valid convolutions
         # and masking outputs due to padding
         embs = F.pad(embs, [0, 1])
+        print(embs.shape)
         embs = self.conv1(embs)
+        print(embs.shape)
         embs = embs * text_mask
         if embs.shape[2] >= 4:
             kernel_size = 4
@@ -194,12 +198,17 @@ class DKRL(WordEmbeddingsLP):
             kernel_size = 2
         embs = F.max_pool1d(embs, kernel_size=kernel_size)
         text_mask = F.max_pool1d(text_mask, kernel_size=kernel_size)
+        print(embs.shape)
         embs = torch.tanh(embs)
         embs = F.pad(embs, [0, 1])
         embs = self.conv2(embs)
         lengths = torch.sum(text_mask, dim=-1)
+        print(text_mask.shape)
+        #print(lengths)
         embs = torch.sum(embs * text_mask, dim=-1) / lengths
+        print(embs.shape)
         embs = torch.tanh(embs)
+        input()
 
         return embs
 
