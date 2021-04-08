@@ -2,10 +2,10 @@
 # coding: utf-8
 
 # Script to run baseline:
-# 
+#
 # ```
-# 
-# python train.py link_prediction with \                                     
+#
+# python train.py link_prediction with \
 # dataset='FB15k-237' \
 # inductive=True \
 # model='bert-dkrl' \
@@ -22,7 +22,7 @@
 # max_epochs=5 \
 # checkpoint=None \
 # use_cached_text=False
-# 
+#
 # ```
 
 # In[1]:
@@ -247,7 +247,7 @@ class DKRL(WordEmbeddingsLP):
         #print(all_emb)
         all_emb = np.array(all_emb)
         embs = torch.tensor(all_emb)
-        print(embs.shape)
+        #print(embs.shape)
 
         #First reshape the batch*2 number of entities - this is done in blp in indcutive forward only
         embs = embs.view(-1, max_len, self.emb_dim)
@@ -552,7 +552,7 @@ class TextGraphDataset(GraphDataset):
             all_text.append(text)
         #print(text)
         return all_text
-    
+
     def collate_fn(self, data_list):
         """Given a batch of triples, return it in the form of
         entity descriptions, and the relation types between them.
@@ -562,7 +562,7 @@ class TextGraphDataset(GraphDataset):
         if batch_size <= 1:
             raise ValueError('collate_text can only work with batch sizes'
                              ' larger than 1.')
-        
+
         #print(data_list)
         pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
         #print(pos_pairs)
@@ -1111,5 +1111,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin',                     encoder_name='bert-base-cased', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128,                    max_epochs=1, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='bert-base-cased', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=1, checkpoint=None)
 
