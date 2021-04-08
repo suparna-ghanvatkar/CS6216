@@ -192,8 +192,10 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
         if not encoder_name and not embeddings:
             raise ValueError('Must provided one of encoder_name or embeddings')
 
-        if encoder_name is not None:
+        if encoder_name is not "flair":
             encoder = TransformerWordEmbeddings(encoder_name)
+        elif encoder_name=="flair":
+            encoder = FlairEmbeddings("en-forward-fast")
         else:
             #then it is GLOVE in this case
             encoder = WordEmbeddings('glove')
@@ -490,6 +492,7 @@ class TextGraphDataset(GraphDataset):
 
         maps = torch.load(self.maps_path)
         ent_ids = maps['ent_ids']
+        max_length = 32
 
 
         #self.text_data = torch.zeros((len(ent_ids), max_len + 1),
@@ -518,7 +521,7 @@ class TextGraphDataset(GraphDataset):
 
                     if drop_stopwords:
                         tokens = nltk.word_tokenize(text)
-                        text = ' '.join([t for t in tokens if
+                        text = ' '.join([t for t in tokens[:max_length] if
                                          t.lower() not in DROPPED])
 
                     #text_tokens = tokenizer.encode(text,
@@ -1111,5 +1114,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='bert-base-cased', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=1, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=1, checkpoint=None)
 
