@@ -14,6 +14,6 @@ use_scheduler=False \
 batch_size=64 \
 emb_batch_size=512 \
 eval_batch_size=128 \
-max_epochs=80 \
+max_epochs=1 \
 checkpoint=None \
 use_cached_text=False

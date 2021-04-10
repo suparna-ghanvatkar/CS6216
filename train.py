@@ -100,7 +100,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     while idx < num_entities:
         # Get a batch of entity IDs and encode them
         batch_ents = entities[idx:idx + emb_batch_size]
-
+        print(batch_ents)
         if isinstance(model, models.InductiveLinkPrediction):
             # Encode with entity descriptions
             data = text_dataset.get_entity_description(batch_ents)

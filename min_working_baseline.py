@@ -43,6 +43,9 @@ from collections import defaultdict
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
+import concurrent.futures
+from time import time
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 #from data import CATEGORY_IDS
 #from data import GraphDataset, TextGraphDataset, GloVeTokenizer
@@ -231,29 +234,48 @@ class DKRL(WordEmbeddingsLP):
         # Extract word embeddings and mask padding
         max_len = 32
         all_emb = []
-        for ent_text in text:
-            emb = torch.zeros(len(ent_text), max_len, self.emb_dim)
-            for i, ent in enumerate(ent_text):
-                #print(ent)
-                self.embeddings.embed(ent)
+        for j,ent_text in enumerate(text):
+            # For training loop where 2 entities are present in each ent_text
+            text_mask = torch.ones((self.batch_size*2, max_len), dtype=torch.float, device=device)
+            if isinstance(ent_text, list):
+                emb = torch.zeros(len(ent_text), max_len, self.emb_dim)
+                for i, ent in enumerate(ent_text):
+                    #print(ent)
+                    self.embeddings.embed(ent)
+                    toks = []
+                    for token in ent:
+                        toks.append(token.embedding.cpu().numpy())
+                    toks = torch.tensor(toks)
+                    if max_len>len(toks):
+                        emb[i,:len(toks)] = toks
+                        text_mask[(2*j)+i, len(toks):] = 0
+                    else:
+                        emb[i, :max_len] = toks[:max_len]
+                    #print(emb)
+            else:
+                #For the evaluation loop
+                text_mask = torch.ones((len(text), max_len), dtype=torch.float, device=device)
+                emb = torch.zeros(max_len, self.emb_dim)
+                self.embeddings.embed(ent_text)
                 toks = []
-                for token in ent:
-                    toks.append(token.embedding.numpy())
+                for token in ent_text:
+                    toks.append(token.embedding.cpu().numpy())
                 toks = torch.tensor(toks)
                 if max_len>len(toks):
-                    emb[i,:len(toks)] = toks
+                    emb[:len(toks)] = toks
+                    text_mask[j, len(toks):] = 0
                 else:
-                    emb[i, :max_len] = toks[:max_len]
+                    emb[:max_len] = toks[:max_len]
                 #print(emb)
             all_emb.append(emb.numpy())
         #print(all_emb)
         all_emb = np.array(all_emb)
         embs = torch.tensor(all_emb)
         #print(embs.shape)
+        embs = embs.to(device)
 
         #First reshape the batch*2 number of entities - this is done in blp in indcutive forward only
         embs = embs.view(-1, max_len, self.emb_dim)
-        text_mask = torch.ones((embs.shape[0], max_len), dtype=torch.float)
         text_mask = text_mask.unsqueeze(1)
         # Reshape to (N, C, L)
         embs = embs.transpose(1, 2)
@@ -547,13 +569,19 @@ class TextGraphDataset(GraphDataset):
 
     def get_entity_description(self, ent_ids):
         """Get entity descriptions for a tensor of entity IDs."""
-        all_text = []
-        for ent_id in ent_ids:
-            text = []
-            for ent in ent_id:
-                text.append(self.text_data[ent.item()])
-            all_text.append(text)
-        #print(text)
+        #print(ent_ids.shape)
+        # Let us do parallel lookup for the different elements of ent_ids
+        lookup = lambda ent: self.text_data[ent.item()]
+        def arraylookup(t): 
+            if t.shape!= torch.Size([]) and t.shape[0]>1:
+                out = []
+                for i in t:
+                    out.append(lookup(i))
+            else:
+                out = lookup(t)
+            return out
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            all_text = [arraylookup(ent_id) for ent_id in ent_ids]
         return all_text
 
     def collate_fn(self, data_list):
@@ -769,7 +797,6 @@ def get_logger():
 
 # In[16]:
 
-
 OUT_PATH = 'output/'
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -819,11 +846,11 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     while idx < num_entities:
         # Get a batch of entity IDs and encode them
         batch_ents = entities[idx:idx + emb_batch_size]
-
+        #print(batch_ents)
         if isinstance(model, InductiveLinkPrediction):
             # Encode with entity descriptions
             data = text_dataset.get_entity_description(batch_ents)
-            batch_emb = model(data.to(device))
+            batch_emb = model(data)
         else:
             # Encode from lookup table
             batch_emb = model(batch_ents)
@@ -977,12 +1004,8 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
         num_devices = 1
         print('Training on CPU')
 
-    if model == 'transductive':
-        train_data = GraphDataset(triples_file, num_negatives,
-                                  write_maps_file=True,
-                                  num_devices=num_devices)
-    else:
-        train_data = TextGraphDataset(triples_file, num_negatives,
+
+    train_data = TextGraphDataset(triples_file, num_negatives,
                                       drop_stopwords,
                                       write_maps_file=True,
                                       num_devices=num_devices)
@@ -1000,26 +1023,19 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     test_loader = DataLoader(test_data, eval_batch_size)
 
     # Build graph with all triples to compute filtered metrics
-    if dataset != 'Wikidata5M':
-        graph = nx.MultiDiGraph()
-        all_triples = torch.cat((train_data.triples,
-                                 valid_data.triples,
-                                 test_data.triples))
-        graph.add_weighted_edges_from(all_triples.tolist())
 
-        train_ent = set(train_data.entities.tolist())
-        train_val_ent = set(valid_data.entities.tolist()).union(train_ent)
-        train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
-        val_new_ents = train_val_ent.difference(train_ent)
-        test_new_ents = train_val_test_ent.difference(train_val_ent)
-    else:
-        graph = None
+    graph = nx.MultiDiGraph()
+    all_triples = torch.cat((train_data.triples,
+                                valid_data.triples,
+                                test_data.triples))
+    graph.add_weighted_edges_from(all_triples.tolist())
 
-        train_ent = set(train_data.entities.tolist())
-        train_val_ent = set(valid_data.entities.tolist())
-        train_val_test_ent = set(test_data.entities.tolist())
-        val_new_ents = test_new_ents = None
-
+    train_ent = set(train_data.entities.tolist())
+    train_val_ent = set(valid_data.entities.tolist()).union(train_ent)
+    train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
+    val_new_ents = train_val_ent.difference(train_ent)
+    test_new_ents = train_val_test_ent.difference(train_val_ent)
+    
     print('num_train_entities', len(train_ent))
 
     train_ent = torch.tensor(list(train_ent))
@@ -1045,6 +1061,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     best_valid_mrr = 0.0
     checkpoint_file = osp.join(OUT_PATH, f'model-base.pt')
     for epoch in range(1, max_epochs + 1):
+        start = time()
         train_loss = 0
         for step, data in enumerate(train_loader):
             loss = model(*data).mean()
@@ -1061,42 +1078,38 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                 print(f'Epoch {epoch}/{max_epochs} '
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 print('batch_loss', loss.item())
-
+        stop = time()
         print('train_loss', train_loss / len(train_loader), epoch)
+        print('train time for epoch:', stop-start)
 
-        if dataset != 'Wikidata5M':
-            print('Evaluating on sample of training set')
-            eval_link_prediction(model, train_eval_loader, train_data, train_ent,
-                                 epoch, emb_batch_size, prefix='train',
-                                 max_num_batches=len(valid_loader))
+        #if dataset != 'Wikidata5M':
+        #    print('Evaluating on sample of training set')
+        #    eval_link_prediction(model, train_eval_loader, train_data, train_ent,
+        #                         epoch, emb_batch_size, prefix='train',
+        #                         max_num_batches=len(valid_loader))
 
-        print('Evaluating on validation set')
-        val_mrr, _ = eval_link_prediction(model, valid_loader, train_data,
-                                          train_val_ent, epoch,
-                                          emb_batch_size, prefix='valid')
+        #print('Evaluating on validation set')
+        #val_mrr, _ = eval_link_prediction(model, valid_loader, train_data,
+        #                                  train_val_ent, epoch,
+        #                                  emb_batch_size, prefix='valid')
 
         # Keep checkpoint of best performing model (based on raw MRR)
-        if val_mrr > best_valid_mrr:
-            best_valid_mrr = val_mrr
+        #if val_mrr > best_valid_mrr:
+        #    best_valid_mrr = val_mrr
+        # SUPARNA - original code has the next line indented to save for best performing model
+        if epoch%5==0:
             torch.save(model.state_dict(), checkpoint_file)
 
     # Evaluate with best performing checkpoint
     if max_epochs > 0:
         model.load_state_dict(torch.load(checkpoint_file))
 
-    if dataset == 'Wikidata5M':
-        graph = nx.MultiDiGraph()
-        graph.add_weighted_edges_from(valid_data.triples.tolist())
-
+    start = time()
     print('Evaluating on validation set (with filtering)')
     eval_link_prediction(model, valid_loader, train_data, train_val_ent,
                          max_epochs + 1, emb_batch_size, prefix='valid',
                          filtering_graph=graph,
                          new_entities=val_new_ents)
-
-    if dataset == 'Wikidata5M':
-        graph = nx.MultiDiGraph()
-        graph.add_weighted_edges_from(test_data.triples.tolist())
 
     print('Evaluating on test set')
     _, ent_emb = eval_link_prediction(model, test_loader, train_data,
@@ -1106,6 +1119,9 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                                       new_entities=test_new_ents,
                                       return_embeddings=True)
 
+    stop = time()
+
+    print("Eval run times:", stop-start)
     # Save final entity embeddings obtained with trained encoder
     #torch.save(ent_emb, osp.join(OUT_PATH, f'ent_emb-base.pt'))
     #torch.save(train_val_test_ent, osp.join(OUT_PATH, f'ents-base.pt'))
@@ -1114,5 +1130,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=1, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=10, checkpoint=None)
 
