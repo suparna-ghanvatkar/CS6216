@@ -172,8 +172,7 @@ class InductiveLinkPrediction(LinkPrediction):
         raise NotImplementedError
 
     def forward(self, text, rels=None, neg_idx=None):
-        text = text.to(device)
-
+        
         # Encode text into an entity representation from its description
         ent_embs = self.encode(text)
 
@@ -1115,7 +1114,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
             raise ValueError(f'Batch size ({batch_size}) must be a multiple of'
                              f' the number of CUDA devices ({num_devices})')
         print(f'CUDA devices used: {num_devices}')
-        raise ValueError('Training on GPU')
+        #raise ValueError('Training on GPU')
     else:
         num_devices = 1
         print('Training on CPU')
@@ -1162,6 +1161,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
         ### TODO: Add autoencoder here which will take all entity texts - train the lstmaec 
         ### and pass to model. probably add unftcion in textgraphdata to get all texts
         input_data = train_data.get_entity_description(train_ent[:20])
+        input_data = embed_text(input_data)
         refined_input_data, seq_len, no_features = prepare_dataset(input_data)
         aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=2, patience=20, max_grad_norm=0.005)
         aec = aec.to(device)
