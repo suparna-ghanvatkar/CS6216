@@ -1,6 +1,6 @@
 data/FB*
 __pycache*
-output*i
+output*
 *.out
 *.pt
 .vscode/*

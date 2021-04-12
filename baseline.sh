@@ -3,7 +3,7 @@
 python train.py link_prediction with \
 dataset='FB15k-237' \
 inductive=True \
-model='bert-dkrl' \
+model='bert-bow' \
 rel_model='transe' \
 loss_fn='margin' \
 regularizer=1e-2 \
