@@ -70,6 +70,8 @@ from transformers import BertModel
 
 from flair.embeddings import FlairEmbeddings, TransformerWordEmbeddings, WordEmbeddings
 from flair.data import Sentence
+import flair
+flair.device = torch.device('cpu')
 
 
 # In[4]:
@@ -202,7 +204,7 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
         if encoder_name is not "flair":
             encoder = TransformerWordEmbeddings(encoder_name)
         elif encoder_name=="flair":
-            encoder = FlairEmbeddings("en-forward-fast").to(device)
+            encoder = FlairEmbeddings("en-forward-fast")
         else:
             #then it is GLOVE in this case
             encoder = WordEmbeddings('glove')
