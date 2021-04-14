@@ -312,7 +312,7 @@ class DKRL(WordEmbeddingsLP):
 
 
 class EntAutoEnc(WordEmbeddingsLP):
-    def __init__(self, dim, rel_model, loss_fn, num_relations, regularizer, batch_size,
+    def __init__(self, dim, rel_model, loss_fn, num_entities, num_relations, regularizer, batch_size,
                  encoder_name=None, embeddings=None, aec=None):
         super().__init__(rel_model, loss_fn, num_relations, regularizer, batch_size,
                          dim, encoder_name, embeddings)
@@ -321,6 +321,12 @@ class EntAutoEnc(WordEmbeddingsLP):
             raise ValueError
         self.aec = aec
         self.emb_dim = self.embeddings.embedding_length
+
+        self.ent_emb = nn.Embedding(num_entities, self.dim)
+        nn.init.xavier_uniform_(self.ent_emb.weight.data)
+
+        self.W1 = nn.Linear(self.dim, self.dim)
+        self.W2 = nn.Linear(self.dim, self.dim)
 
     def get_encoding(self, ent_text):
         emb = torch.zeros(self.max_len, self.emb_dim)
@@ -350,7 +356,7 @@ class EntAutoEnc(WordEmbeddingsLP):
                 emb[i, :self.max_len] = toks[:self.max_len]
         return emb.numpy()
 
-    def _encode_entity(self, text):
+    def _encode_entity(self, entities, text):
         # Extract word embeddings and mask padding
         self.max_len = 32
         all_emb = []
@@ -377,7 +383,30 @@ class EntAutoEnc(WordEmbeddingsLP):
         # Now adding encoding using TorchCoder
         enc_embs = self.aec.encode(input_embs)
 
-        return enc_embs
+        #encoding of the embeddings for the entity
+        ent_emb = self.ent_emb(entities)
+        ent_emb = ent_emb.view(-1, self.dim)
+
+        embs = self.W1(enc_embs) + self.W2(ent_emb)
+        embs = torch.tanh(embs)
+
+        return embs
+
+    def forward(self, pos_pair, text, rels=None, neg_idx=None):
+        
+        # Encode text into an entity representation from its description
+        ent_embs = self.encode(pos_pair, text)
+
+        if rels is None and neg_idx is None:
+            # Forward is being used to compute entity embeddings only
+            out = ent_embs
+        else:
+            # Forward is being used to compute link prediction loss
+            ent_embs = ent_embs.view(self.batch_size, 2, -1)
+            out = self.compute_loss(ent_embs, rels, neg_idx)
+
+        return out
+
 # data file functions
 
 # In[10]:
@@ -717,7 +746,7 @@ def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
         return DKRL(dim, rel_model, loss_fn, num_relations, regularizer, batch_size,
                            embeddings='data/glove/glove.6B.300d.pt')
     elif model == 'flair-torchcoder':
-        return EntAutoEnc(dim, rel_model, loss_fn, num_entities, regularizer, batch_size, 
+        return EntAutoEnc(dim, rel_model, loss_fn, num_entities, num_relations, regularizer, batch_size, 
                     encoder_name=encoder_name, aec=aec)
     else:
         raise ValueError(f'Unkown model {model}')
@@ -1153,7 +1182,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                                       num_devices=num_devices)
 
     train_loader = DataLoader(train_data, batch_size, shuffle=True,
-                              collate_fn=train_data.collate_fn,
+                              collate_fn=train_data.collate_fn_with_ent,
                               num_workers=0, drop_last=True)
 
     train_eval_loader = DataLoader(train_data, eval_batch_size)
