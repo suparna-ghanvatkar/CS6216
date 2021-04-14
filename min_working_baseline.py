@@ -322,54 +322,60 @@ class EntAutoEnc(WordEmbeddingsLP):
         self.aec = aec
         self.emb_dim = self.embeddings.embedding_length
 
+    def get_encoding(self, ent_text):
+        emb = torch.zeros(self.max_len, self.emb_dim)
+        self.embeddings.embed(ent_text)
+        toks = []
+        for token in ent_text:
+            toks.append(token.embedding.cpu().numpy())
+        toks = torch.tensor(toks)
+        if self.max_len>len(toks):
+            emb[:len(toks)] = toks
+        else:
+            emb[:self.max_len] = toks[:self.max_len]
+        return emb.numpy()
+
+    def train_get_encoding(self, ent_text):
+        emb = torch.zeros(len(ent_text), self.max_len, self.emb_dim)
+        for i, ent in enumerate(ent_text):
+            #print(ent)
+            self.embeddings.embed(ent)
+            toks = []
+            for token in ent:
+                toks.append(token.embedding.cpu().numpy())
+            toks = torch.tensor(toks)
+            if self.max_len>len(toks):
+                emb[i,:len(toks)] = toks
+            else:
+                emb[i, :self.max_len] = toks[:self.max_len]
+        return emb.numpy()
+
     def _encode_entity(self, text):
         # Extract word embeddings and mask padding
-        max_len = 32
+        self.max_len = 32
         all_emb = []
-        for j,ent_text in enumerate(text):
-            # For training loop where 2 entities are present in each ent_text
-            if isinstance(ent_text, list):
-                emb = torch.zeros(len(ent_text), max_len, self.emb_dim)
-                for i, ent in enumerate(ent_text):
-                    #print(ent)
-                    self.embeddings.embed(ent)
-                    toks = []
-                    for token in ent:
-                        toks.append(token.embedding.cpu().numpy())
-                    toks = torch.tensor(toks)
-                    if max_len>len(toks):
-                        emb[i,:len(toks)] = toks
-                    else:
-                        emb[i, :max_len] = toks[:max_len]
-                    #print(emb)
-            else:
-                #For the evaluation loop
-                text_mask = torch.ones((len(text), max_len), dtype=torch.float, device=device)
-                emb = torch.zeros(max_len, self.emb_dim)
-                self.embeddings.embed(ent_text)
-                toks = []
-                for token in ent_text:
-                    toks.append(token.embedding.cpu().numpy())
-                toks = torch.tensor(toks)
-                if max_len>len(toks):
-                    emb[:len(toks)] = toks
-                    text_mask[j, len(toks):] = 0
-                else:
-                    emb[:max_len] = toks[:max_len]
-                #print(emb)
-            all_emb.append(emb.numpy())
-        #print(all_emb)
+        if isinstance(text[0], list):
+            train = True
+        else:
+            train = False
+        
+        if train:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+                all_emb = [self.train_get_encoding(ent_text) for ent_text in text]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+                all_emb = [self.get_encoding(ent_text) for ent_text in text]
         all_emb = np.array(all_emb)
         embs = torch.tensor(all_emb)
         #print(embs.shape)
         embs = embs.to(device)
 
         #First reshape the batch*2 number of entities - this is done in blp in indcutive forward only
-        embs = embs.view(-1, max_len, self.emb_dim)
+        embs = embs.view(-1, self.max_len, self.emb_dim)
         input_embs, _, _ = prepare_dataset(embs)
         
         # Now adding encoding using TorchCoder
-        enc_embs, _ = self.aec(input_embs)
+        enc_embs = self.aec.encode(input_embs)
 
         return enc_embs
 # data file functions
@@ -671,6 +677,25 @@ class TextGraphDataset(GraphDataset):
 
         return text, rels, neg_idx
 
+    def collate_fn_with_ent(self, data_list):
+        """
+        Given a batch of triples, return it in form of entity descriptions, the entity type
+        and the relation type between them. Use as a collate_fn for DataLoader when using autoencoder models.
+        """
+        batch_size = len(data_list) // self.num_devices
+        if batch_size <= 1:
+            raise ValueError('collate_text can only work with batch sizes'
+                             ' larger than 1.')
+
+        #print(data_list)
+        pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
+        #print(pos_pairs)
+        text = self.get_entity_description(pos_pairs)
+
+        neg_idx = get_negative_sampling_indices(batch_size, self.neg_samples,
+                                                repeats=self.num_devices)
+
+        return pos_pairs, text, rels, neg_idx
 
 # utils
 
@@ -1162,7 +1187,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     if model=='flair-torchcoder':
         ### TODO: Add autoencoder here which will take all entity texts - train the lstmaec 
         ### and pass to model. probably add unftcion in textgraphdata to get all texts
-        input_data = train_data.get_entity_description(train_ent[:20])
+        input_data = train_data.get_entity_description(train_ent[:50])
         input_data = embed_text(input_data)
         refined_input_data, seq_len, no_features = prepare_dataset(input_data)
         aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=2, patience=20, max_grad_norm=0.005)
@@ -1192,8 +1217,8 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                                                     num_warmup_steps=warmup,
                                                     num_training_steps=total_steps)
     best_valid_mrr = 0.0
-    checkpoint_file = osp.join(OUT_PATH, f'model-base.pt')
-    for epoch in range(1, max_epochs + 1):
+    checkpoint_file = osp.join(OUT_PATH, f'model-torchcoder.pt')
+    for epoch in range(0, max_epochs):
         start = time()
         train_loss = 0
         for step, data in enumerate(train_loader):
@@ -1211,6 +1236,10 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                 print(f'Epoch {epoch}/{max_epochs} '
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 print('batch_loss', loss.item())
+
+            if step==0:
+                break
+
         stop = time()
         print('train_loss', train_loss / len(train_loader), epoch)
         print('train time for epoch:', stop-start)
@@ -1232,10 +1261,13 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
         # SUPARNA - original code has the next line indented to save for best performing model
         if epoch%5==0:
             torch.save(model.state_dict(), checkpoint_file)
+        
+
 
     # Evaluate with best performing checkpoint
-    if max_epochs > 0:
-        model.load_state_dict(torch.load(checkpoint_file))
+    #if max_epochs > 0:
+    print(model)
+    model.load_state_dict(torch.load(checkpoint_file))
 
     start = time()
     print('Evaluating on validation set (with filtering)')
