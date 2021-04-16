@@ -1272,9 +1272,8 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
             #if step==0:
             #    break
-            del loss, data
             if device!="cpu":
-                print("emptying cache")
+                del loss, data  #for memory management in GPU
                 torch.cuda.empty_cache() 
 
         stop = time()
@@ -1332,5 +1331,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=1, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=30, checkpoint=None)
 
