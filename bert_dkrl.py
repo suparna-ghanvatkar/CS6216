@@ -1159,7 +1159,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                     encoder_name, regularizer, max_len, num_negatives, lr,
                     use_scheduler, batch_size, emb_batch_size, eval_batch_size,
                     max_epochs, checkpoint):
-    drop_stopwords = False
+    drop_stopwords = True
 
     prefix = 'ind-' if inductive and model != 'transductive' else ''
     triples_file = f'data/{dataset}/{prefix}train.tsv'
@@ -1182,7 +1182,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                                       num_devices=num_devices)
 
     train_loader = DataLoader(train_data, batch_size, shuffle=True,
-                              collate_fn=train_data.collate_fn_with_ent,
+                              collate_fn=train_data.collate_fn,
                               num_workers=0, drop_last=True)
 
     train_eval_loader = DataLoader(train_data, eval_batch_size)
@@ -1219,7 +1219,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
         input_data = train_data.get_entity_description(train_ent)
         input_data = embed_text(input_data)
         refined_input_data, seq_len, no_features = prepare_dataset(input_data)
-        aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=15, patience=20, max_grad_norm=0.005)
+        aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=2, patience=20, max_grad_norm=0.005)
         aec = aec.to(device)
         final_loss = aec.fit(refined_input_data) 
         print("Autoencoder training loss: ", final_loss)
@@ -1246,7 +1246,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                                                     num_warmup_steps=warmup,
                                                     num_training_steps=total_steps)
     best_valid_mrr = 0.0
-    checkpoint_file = osp.join(OUT_PATH, f'model-torchcoder.pt')
+    checkpoint_file = osp.join(OUT_PATH, f'model-bert.pt')
     for epoch in range(0, max_epochs):
         start = time()
         train_loss = 0
@@ -1324,5 +1324,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='flair-torchcoder', rel_model='transe', loss_fn='margin', encoder_name='bert-base-cased', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=15, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='bert-base-cased', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=30, checkpoint=None)
 

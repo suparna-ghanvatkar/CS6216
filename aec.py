@@ -174,7 +174,7 @@ class InductiveLinkPrediction(LinkPrediction):
         raise NotImplementedError
 
     def forward(self, text, rels=None, neg_idx=None):
-        
+
         # Encode text into an entity representation from its description
         ent_embs = self.encode(text)
 
@@ -364,7 +364,7 @@ class EntAutoEnc(WordEmbeddingsLP):
             train = True
         else:
             train = False
-        
+
         if train:
             with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
                 all_emb = [self.train_get_encoding(ent_text) for ent_text in text]
@@ -379,7 +379,7 @@ class EntAutoEnc(WordEmbeddingsLP):
         #First reshape the batch*2 number of entities - this is done in blp in indcutive forward only
         embs = embs.view(-1, self.max_len, self.emb_dim)
         input_embs, _, _ = prepare_dataset(embs)
-        
+
         # Now adding encoding using TorchCoder
         enc_embs = self.aec.encode(input_embs)
 
@@ -393,7 +393,7 @@ class EntAutoEnc(WordEmbeddingsLP):
         return embs
 
     def forward(self, pos_pair, text, rels=None, neg_idx=None):
-        
+
         # Encode text into an entity representation from its description
         ent_embs = self.encode(pos_pair, text)
 
@@ -674,7 +674,7 @@ class TextGraphDataset(GraphDataset):
         #print(ent_ids.shape)
         # Let us do parallel lookup for the different elements of ent_ids
         lookup = lambda ent: self.text_data[ent.item()]
-        def arraylookup(t): 
+        def arraylookup(t):
             if t.shape!= torch.Size([]) and t.shape[0]>1:
                 out = []
                 for i in t:
@@ -746,7 +746,7 @@ def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
         return DKRL(dim, rel_model, loss_fn, num_relations, regularizer, batch_size,
                            embeddings='data/glove/glove.6B.300d.pt')
     elif model == 'flair-torchcoder':
-        return EntAutoEnc(dim, rel_model, loss_fn, num_entities, num_relations, regularizer, batch_size, 
+        return EntAutoEnc(dim, rel_model, loss_fn, num_entities, num_relations, regularizer, batch_size,
                     encoder_name=encoder_name, aec=aec)
     else:
         raise ValueError(f'Unkown model {model}')
@@ -939,11 +939,11 @@ def prepare_dataset(sequential_data) :
     else:
         unsqueezed_data = torch.tensor(sequential_data, dtype = torch.float)
         #unsqueezed_data = data_in_tensor.unsqueeze(2)
-        
+
     seq_len = unsqueezed_data.shape[1]
-    no_features = unsqueezed_data.shape[2] 
+    no_features = unsqueezed_data.shape[2]
     # shape[0] is the number of batches
-    
+
     return unsqueezed_data, seq_len, no_features
 
 # function for flair embedding of the entity texts for training by the autoencoder.
@@ -1206,7 +1206,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
     val_new_ents = train_val_ent.difference(train_ent)
     test_new_ents = train_val_test_ent.difference(train_val_ent)
-    
+
     print('num_train_entities', len(train_ent))
 
     train_ent = torch.tensor(list(train_ent))
@@ -1214,14 +1214,14 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
     if model=='flair-torchcoder':
-        ### TODO: Add autoencoder here which will take all entity texts - train the lstmaec 
+        ### TODO: Add autoencoder here which will take all entity texts - train the lstmaec
         ### and pass to model. probably add unftcion in textgraphdata to get all texts
         input_data = train_data.get_entity_description(train_ent)
         input_data = embed_text(input_data)
         refined_input_data, seq_len, no_features = prepare_dataset(input_data)
         aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=15, patience=20, max_grad_norm=0.005)
         aec = aec.to(device)
-        final_loss = aec.fit(refined_input_data) 
+        final_loss = aec.fit(refined_input_data)
         print("Autoencoder training loss: ", final_loss)
     else:
         aec = None
@@ -1234,7 +1234,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
     if device != torch.device('cpu'):
         model = torch.nn.DataParallel(model).to(device)
-    
+
     if device== torch.device('cpu'):
         model = model.cpu()
 
@@ -1290,7 +1290,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
         # SUPARNA - original code has the next line indented to save for best performing model
         if epoch%5==0:
             torch.save(model.state_dict(), checkpoint_file)
-        
+
 
 
     # Evaluate with best performing checkpoint
@@ -1324,5 +1324,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='flair-torchcoder', rel_model='transe', loss_fn='margin', encoder_name='bert-base-cased', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=15, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='flair-torchcoder', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=12, checkpoint=None)
 
