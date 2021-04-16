@@ -68,7 +68,7 @@ from transformers import BertModel
 # In[3]:
 
 
-from flair.embeddings import FlairEmbeddings, TransformerWordEmbeddings, WordEmbeddings
+from flair.embeddings import FlairEmbeddings, TransformerWordEmbeddings, WordEmbeddings, StackedEmbeddings
 from flair.data import Sentence
 import flair
 flair.device = torch.device('cpu')
@@ -204,7 +204,11 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
         if encoder_name is not "flair":
             encoder = TransformerWordEmbeddings(encoder_name)
         elif encoder_name=="flair":
-            encoder = FlairEmbeddings("en-forward-fast")
+            encoder = StackedEmbeddings([
+                                        WordEmbeddings('glove'),
+                                        FlairEmbeddings('news-forward-fast'),
+                                        FlairEmbeddings('news-backward-fast'),
+                                       ])
         else:
             #then it is GLOVE in this case
             encoder = WordEmbeddings('glove')
@@ -948,7 +952,11 @@ def prepare_dataset(sequential_data) :
 
 # function for flair embedding of the entity texts for training by the autoencoder.
 def embed_text(text):
-    encoder = FlairEmbeddings("en-forward-fast")
+    encoder = StackedEmbeddings([
+                                        WordEmbeddings('glove'),
+                                        FlairEmbeddings('news-forward-fast'),
+                                        FlairEmbeddings('news-backward-fast'),
+                                       ])
     emb_dim = encoder.embedding_length
     max_len = 32
     all_emb = []
@@ -1219,7 +1227,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
         input_data = train_data.get_entity_description(train_ent)
         input_data = embed_text(input_data)
         refined_input_data, seq_len, no_features = prepare_dataset(input_data)
-        aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=15, patience=20, max_grad_norm=0.005)
+        aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=10, patience=20, max_grad_norm=0.005)
         aec = aec.to(device)
         final_loss = aec.fit(refined_input_data)
         print("Autoencoder training loss: ", final_loss)
@@ -1235,7 +1243,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     if device != torch.device('cpu'):
         model = torch.nn.DataParallel(model).to(device)
 
-    if device== torch.device('cpu'):
+    if device == torch.device('cpu'):
         model = model.cpu()
 
     optimizer = Adam(model.parameters(), lr=lr)

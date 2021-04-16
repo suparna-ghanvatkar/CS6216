@@ -29,7 +29,7 @@
 
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 import os.path as osp
 import networkx as nx
@@ -68,10 +68,10 @@ from transformers import BertModel
 # In[3]:
 
 
-from flair.embeddings import FlairEmbeddings, TransformerWordEmbeddings, WordEmbeddings
+from flair.embeddings import FlairEmbeddings, TransformerWordEmbeddings, WordEmbeddings, StackedEmbeddings
 from flair.data import Sentence
 import flair
-flair.device = torch.device('cpu')
+#flair.device = torch.device('cpu')
 
 
 # In[4]:
@@ -204,7 +204,11 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
         if encoder_name is not "flair":
             encoder = TransformerWordEmbeddings(encoder_name)
         elif encoder_name=="flair":
-            encoder = FlairEmbeddings("en-forward-fast")
+            encoder = StackedEmbeddings([
+                                        WordEmbeddings('glove'),
+                                        FlairEmbeddings('news-forward'),
+                                        FlairEmbeddings('news-backward'),
+                                       ])
         else:
             #then it is GLOVE in this case
             encoder = WordEmbeddings('glove')
@@ -922,8 +926,8 @@ def get_logger():
 # In[16]:
 
 OUT_PATH = 'output/'
-#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cpu')
 
 # In[17]:
 
@@ -1159,7 +1163,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                     encoder_name, regularizer, max_len, num_negatives, lr,
                     use_scheduler, batch_size, emb_batch_size, eval_batch_size,
                     max_epochs, checkpoint):
-    drop_stopwords = model in {'bert-dkrl', 'glove-dkrl'}
+    drop_stopwords = False
 
     prefix = 'ind-' if inductive and model != 'transductive' else ''
     triples_file = f'data/{dataset}/{prefix}train.tsv'
@@ -1261,13 +1265,17 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
             train_loss += loss.item()
 
-            if step % int(0.05 * len(train_loader)) == 0:
-                print(f'Epoch {epoch}/{max_epochs} '
-                          f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
-                print('batch_loss', loss.item())
+            #if step % int(0.05 * len(train_loader)) == 0:
+            print(f'Epoch {epoch}/{max_epochs} '
+                        f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
+            print('batch_loss', loss.item())
 
             #if step==0:
             #    break
+            del loss, data
+            if device!="cpu":
+                print("emptying cache")
+                torch.cuda.empty_cache() 
 
         stop = time()
         print('train_loss', train_loss / len(train_loader), epoch)
@@ -1324,5 +1332,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=30, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=1, checkpoint=None)
 
