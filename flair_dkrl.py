@@ -206,8 +206,8 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
         elif encoder_name=="flair":
             encoder = StackedEmbeddings([
                                         WordEmbeddings('glove'),
-                                        FlairEmbeddings('news-forward'),
-                                        FlairEmbeddings('news-backward'),
+                                        FlairEmbeddings('news-forward-fast'),
+                                        FlairEmbeddings('news-backward-fast'),
                                        ])
         else:
             #then it is GLOVE in this case
@@ -1265,14 +1265,14 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
             train_loss += loss.item()
 
-            #if step % int(0.05 * len(train_loader)) == 0:
-            print(f'Epoch {epoch}/{max_epochs} '
+            if step % int(0.05 * len(train_loader)) == 0:
+                print(f'Epoch {epoch}/{max_epochs} '
                         f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
-            print('batch_loss', loss.item())
+                print('batch_loss', loss.item())
 
             #if step==0:
             #    break
-            if device!="cpu":
+            if device!=torch.device("cpu"):
                 del loss, data  #for memory management in GPU
                 torch.cuda.empty_cache() 
 
@@ -1331,5 +1331,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=30, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='bert-dkrl', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=25, checkpoint=None)
 
