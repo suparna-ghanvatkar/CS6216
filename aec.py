@@ -360,27 +360,31 @@ class EntAutoEnc(WordEmbeddingsLP):
                 emb[i, :self.max_len] = toks[:self.max_len]
         return emb.numpy()
 
-    def _encode_entity(self, entities, text):
+    def _encode_entity(self, entities, text=None):
         # Extract word embeddings and mask padding
         self.max_len = 32
         all_emb = []
-        if isinstance(text[0], list):
-            train = True
+        if text is not None:
+            if isinstance(text[0], list):
+                train = True
+            else:
+                train = False
+            if train:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+                    all_emb = [self.train_get_encoding(ent_text) for ent_text in text]
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+                    all_emb = [self.get_encoding(ent_text) for ent_text in text]
+            
         else:
-            train = False
-
-        if train:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-                all_emb = [self.train_get_encoding(ent_text) for ent_text in text]
-        else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-                all_emb = [self.get_encoding(ent_text) for ent_text in text]
+            #In case no text, get the appropriate embedding from get_encoding - with text_mask for empty sentence
+            all_emb = [self.get_encoding(Sentence(".")) for i in entities]
         all_emb = np.array(all_emb)
         embs = torch.tensor(all_emb)
         #print(embs.shape)
         embs = embs.to(device)
 
-        #First reshape the batch*2 number of entities - this is done in blp in indcutive forward only
+        #First reshape the batch*2 number of entities - this is done in blp in inductive forward only
         embs = embs.view(-1, self.max_len, self.emb_dim)
         input_embs, _, _ = prepare_dataset(embs)
 
@@ -388,6 +392,7 @@ class EntAutoEnc(WordEmbeddingsLP):
         enc_embs = self.aec.encode(input_embs)
 
         #encoding of the embeddings for the entity
+        #print(entities)
         ent_emb = self.ent_emb(entities)
         ent_emb = ent_emb.view(-1, self.dim)
 
@@ -396,7 +401,7 @@ class EntAutoEnc(WordEmbeddingsLP):
 
         return embs
 
-    def forward(self, pos_pair, text, rels=None, neg_idx=None):
+    def forward(self, pos_pair=None, text=None, rels=None, neg_idx=None):
 
         # Encode text into an entity representation from its description
         ent_embs = self.encode(pos_pair, text)
@@ -926,8 +931,8 @@ def get_logger():
 # In[16]:
 
 OUT_PATH = 'output/'
-#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cpu')
 
 # In[17]:
 
@@ -1015,34 +1020,6 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         print("Error in model type not InductiveLink Pred")
         return -1
 
-    # Create embedding lookup table for evaluation
-    ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
-                          device=device)
-    idx = 0
-    num_iters = np.ceil(num_entities / emb_batch_size)
-    iters_count = 0
-    while idx < num_entities:
-        # Get a batch of entity IDs and encode them
-        batch_ents = entities[idx:idx + emb_batch_size]
-        #print(batch_ents)
-        if isinstance(model, InductiveLinkPrediction):
-            # Encode with entity descriptions
-            data = text_dataset.get_entity_description(batch_ents)
-            batch_emb = model(data)
-        else:
-            # Encode from lookup table
-            batch_emb = model(batch_ents)
-
-        ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
-
-        iters_count += 1
-        if iters_count % np.ceil(0.2 * num_iters) == 0:
-            print(f'[{idx + batch_ents.shape[0]:,}/{num_entities:,}]')
-
-        idx += emb_batch_size
-
-    ent_emb = ent_emb.unsqueeze(0)
-
     batch_count = 0
     print('Computing metrics on set of triples')
     total = len(triples_loader) if max_num_batches is None else max_num_batches
@@ -1050,30 +1027,38 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         if max_num_batches is not None and i == max_num_batches:
             break
 
+        #print(i)
         heads, tails, rels = torch.chunk(triples, chunks=3, dim=1)
         # Map entity IDs to positions in ent_emb
         heads = ent2idx[heads].to(device)
         tails = ent2idx[tails].to(device)
+        head_t = text_dataset.get_entity_description(heads)
+        #head_t = [data[h[0].item()] for h in heads]
+        tail_t = text_dataset.get_entity_description(tails)
+        head_embs = model(heads, head_t)
+        tail_embs = model(tails, tail_t)
 
         assert heads.min() >= 0
         assert tails.min() >= 0
 
         # Embed triple
-        head_embs = ent_emb.squeeze()[heads]
-        tail_embs = ent_emb.squeeze()[tails]
+        #head_embs = ent_emb.squeeze()[heads]
+        #tail_embs = ent_emb.squeeze()[tails]
         rel_embs = model.rel_emb(rels.to(device))
 
         # Score all possible heads and tails
-        heads_predictions = model.score_fn(ent_emb, tail_embs, rel_embs)
-        tails_predictions = model.score_fn(head_embs, ent_emb, rel_embs)
+        predictions = model.score_fn(head_embs, tail_embs, rel_embs)
 
-        pred_ents = torch.cat((heads_predictions, tails_predictions))
+        pred_ents = torch.cat((predictions, predictions))
         true_ents = torch.cat((heads, tails))
 
-        hits = hit_at_k(pred_ents, true_ents, hit_positions)
-        for j, h in enumerate(hits):
-            hits_at_k[hit_positions[j]] += h
-        mrr_value += mrr(pred_ents, true_ents).mean().item()
+        try:
+            hits = hit_at_k(pred_ents, true_ents, hit_positions) 
+            for j, h in enumerate(hits):
+                hits_at_k[hit_positions[j]] += h
+            mrr_value += mrr(pred_ents, true_ents).mean().item()
+        except:
+            continue   
 
         if compute_filtered:
             filters = get_triple_filters(triples, filtering_graph,
@@ -1105,8 +1090,8 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
                 mrr_cat_count += batch_mrr_cat_count
 
         batch_count += 1
-        if (i + 1) % int(0.2 * total) == 0:
-            print(f'[{i + 1:,}/{total:,}]')
+        #if (i + 1) % int(0.2 * total) == 0:
+        #    print(f'[{i + 1:,}/{total:,}]')
 
     for hits_dict in (hits_at_k, hits_at_k_filt):
         for k in hits_dict:
@@ -1222,15 +1207,20 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
     if model=='flair-torchcoder':
-        ### TODO: Add autoencoder here which will take all entity texts - train the lstmaec
+        ### Add autoencoder here which will take all entity texts - train the lstmaec
         ### and pass to model. probably add unftcion in textgraphdata to get all texts
-        input_data = train_data.get_entity_description(train_ent)
+        input_data = train_data.get_entity_description(train_ent])
         input_data = embed_text(input_data)
         refined_input_data, seq_len, no_features = prepare_dataset(input_data)
-        aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=10, patience=20, max_grad_norm=0.005)
-        aec = aec.to(device)
-        final_loss = aec.fit(refined_input_data)
-        print("Autoencoder training loss: ", final_loss)
+        #if checkpoint available
+        if os.path.exists('output/flair-torchcoder-aec.pt'):
+            aec = torch.load('output/flair-torchcoder-aec.pt')
+        else:
+            aec = LSTM_AE(seq_len, no_features, embedding_dim=128, learning_rate=1e-3, every_epoch_print=100, epochs=30, patience=20, max_grad_norm=0.005)
+            aec = aec.to(device)
+            final_loss = aec.fit(refined_input_data)
+            print("Autoencoder training loss: ", final_loss)
+            torch.save(aec, 'output/flair-torchcoder-aec.pt')
     else:
         aec = None
 
@@ -1296,8 +1286,8 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
         #if val_mrr > best_valid_mrr:
         #    best_valid_mrr = val_mrr
         # SUPARNA - original code has the next line indented to save for best performing model
-        if epoch%5==0:
-            torch.save(model.state_dict(), checkpoint_file)
+        #if epoch%5==0:
+        #    torch.save(model.state_dict(), checkpoint_file)
 
 
 
@@ -1314,12 +1304,13 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     #                     new_entities=val_new_ents)
 
     print('Evaluating on test set')
-    _, ent_emb = eval_link_prediction(model, test_loader, train_data,
+    eval_link_prediction(model, test_loader, train_data,
                                       train_val_test_ent, max_epochs + 1,
                                       emb_batch_size, prefix='test',
-                                      filtering_graph=graph,
+                                      #max_num_batches=1,
+                                      #filtering_graph=graph,
                                       new_entities=test_new_ents,
-                                      return_embeddings=True)
+                                      return_embeddings=False)
 
     stop = time()
 
@@ -1332,5 +1323,5 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 # In[19]:
 
 
-link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='flair-torchcoder', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=11, checkpoint=None)
+link_prediction(dataset='FB15k-237', inductive=True, dim=128, model='flair-torchcoder', rel_model='transe', loss_fn='margin', encoder_name='flair', regularizer=1e-2, max_len=32, num_negatives=64, lr=1e-4, use_scheduler=False, batch_size=64, emb_batch_size=512, eval_batch_size=128, max_epochs=10, checkpoint=None)
 
