@@ -7,6 +7,7 @@ This repository has the code for the project in course CS6216. The code is built
 conda create --name cs6216 python=3.7
 conda activate cs6216
 pip install -r requirements.txt
+mkdir output
 ```
 ## Running the original baseline DKRL-BERT
 ```
