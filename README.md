@@ -21,3 +21,9 @@ python flair_dkrl.py
 python aec.py
 ```
 To change the number of epochs, go to the last line in each of these files where the link_prediction function is called, and modify the parameters there. 
+
+## Running the DP Simulation with model DKRL-BERT
+```
+chmod +x dp.sh
+./dp.sh
+```
