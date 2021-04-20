@@ -9,6 +9,9 @@ conda activate cs6216
 pip install -r requirements.txt
 mkdir output
 ```
+
+## Download data from [BLP Repo](https://github.com/dfdazac/blp)
+
 ## Running the original baseline DKRL-BERT
 ```
 chmod +x baseline.sh
